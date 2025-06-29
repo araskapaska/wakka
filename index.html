@@ -285,26 +285,17 @@
         const selectBtn = document.getElementById('select-btn');
         const fileInput = document.getElementById('file-input');
 
-        // Check for admin mode with text password
+        // Check for admin mode with fixed password 6544
         const urlParams = new URLSearchParams(window.location.search);
         if (urlParams.has('admin') && urlParams.get('admin') === 'true') {
             const password = prompt('Введите пароль администратора:');
-            if (password) {
-                database.ref('password').once('value').then(snapshot => {
-                    const dbPassword = snapshot.val();
-                    if (dbPassword && dbPassword.toString() === password.toString()) {
-                        isAdmin = true;
-                        adminPanel.style.display = 'flex';
-                        pencilSize = 1;
-                        console.log('Аутентификация успешна');
-                    } else {
-                        alert('Неверный пароль!');
-                        console.log('Введенный пароль:', password, 'Ожидался:', dbPassword);
-                    }
-                }).catch(error => {
-                    console.error('Ошибка при проверке пароля:', error);
-                    alert('Ошибка при проверке пароля');
-                });
+            if (password === '6544') {
+                isAdmin = true;
+                adminPanel.style.display = 'flex';
+                pencilSize = 1;
+                console.log('Аутентификация успешна');
+            } else {
+                alert('Неверный пароль!');
             }
         }
 
