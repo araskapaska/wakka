@@ -16,6 +16,7 @@
             --text-color: #e0e0e0;
             --border-color: #333;
             --button-hover: #2d2d2d;
+            --eraser-color: #1a1a1a;
         }
 
         body {
@@ -122,30 +123,10 @@
             text-decoration: none;
         }
 
-        #admin-panel {
-            display: none;
-            background-color: rgba(0, 0, 0, 0.7);
-            padding: 10px;
-            border-radius: 10px;
-            margin-left: auto;
-        }
-
         #zoom-level {
             min-width: 50px;
             text-align: center;
             font-weight: bold;
-        }
-
-        .admin-button {
-            background-color: #ff5722;
-        }
-
-        .admin-button:hover {
-            background-color: #e64a19;
-        }
-
-        .admin-button.active {
-            background-color: #d84315;
         }
 
         @media (max-width: 768px) {
@@ -170,14 +151,6 @@
                 padding: 4px 8px;
             }
         }
-
-        .selection-rect {
-            border: 2px dashed var(--accent-color);
-            background-color: rgba(187, 134, 252, 0.1);
-            position: absolute;
-            pointer-events: none;
-            display: none;
-        }
     </style>
 </head>
 <body>
@@ -185,6 +158,7 @@
         <div id="menu">
             <div class="menu-group">
                 <button id="pencil-btn" class="active" title="Карандаш"><i class="fas fa-pencil-alt"></i></button>
+                <button id="eraser-btn" title="Ластик"><i class="fas fa-eraser"></i></button>
                 <button id="move-btn" title="Перемещение"><i class="fas fa-arrows-alt"></i></button>
             </div>
             <div class="menu-group">
@@ -195,18 +169,9 @@
             <div class="menu-group">
                 <input type="color" id="color-picker" value="#ffffff" title="Выбор цвета">
             </div>
-            <div id="admin-panel">
-                <div class="menu-group">
-                    <button id="text-btn" title="Добавить текст"><i class="fas fa-font"></i></button>
-                    <input type="file" id="file-input" accept="image/*" style="display: none;">
-                    <button id="image-btn" title="Добавить изображение"><i class="fas fa-image"></i></button>
-                    <button id="select-btn" title="Выделение (ЛКМ)"><i class="fas fa-vector-square"></i></button>
-                </div>
-            </div>
         </div>
         <div id="canvas-container">
             <canvas id="main-canvas"></canvas>
-            <div id="selection-rect" class="selection-rect"></div>
         </div>
         <div id="footer">
             Wakka онлайн рисование | Сделано <a href="https://t.me/koloko_fort" target="_blank">@koloko_fort</a>
@@ -249,44 +214,22 @@
         let panning = false;
         let lastX = 0;
         let lastY = 0;
-        let isAdmin = false;
-        let isSelecting = false;
-        let selectionStart = { x: 0, y: 0 };
-        let selectionRect = document.getElementById('selection-rect');
-        let selectedObjects = [];
 
         // Drawing variables
         let isDrawing = false;
         let currentColor = '#ffffff';
         let currentTool = 'pencil';
         let pencilSize = 3;
+        const eraserSize = 10;
 
         // UI elements
         const colorPicker = document.getElementById('color-picker');
         const zoomLevel = document.getElementById('zoom-level');
         const pencilBtn = document.getElementById('pencil-btn');
+        const eraserBtn = document.getElementById('eraser-btn');
         const moveBtn = document.getElementById('move-btn');
         const zoomInBtn = document.getElementById('zoom-in-btn');
         const zoomOutBtn = document.getElementById('zoom-out-btn');
-        const adminPanel = document.getElementById('admin-panel');
-        const textBtn = document.getElementById('text-btn');
-        const selectBtn = document.getElementById('select-btn');
-        const imageBtn = document.getElementById('image-btn');
-        const fileInput = document.getElementById('file-input');
-
-        // Check for admin mode with fixed password 6544
-        const urlParams = new URLSearchParams(window.location.search);
-        if (urlParams.has('admin') && urlParams.get('admin') === 'true') {
-            const password = prompt('Введите пароль администратора:');
-            if (password === '6544') {
-                isAdmin = true;
-                adminPanel.style.display = 'flex';
-                pencilSize = 1;
-                console.log('Аутентификация успешна');
-            } else {
-                alert('Неверный пароль!');
-            }
-        }
 
         // Optimized canvas loader
         function loadCanvas() {
@@ -308,27 +251,6 @@
                                 selectable: false,
                                 evented: false
                             }));
-                        } else if (item.type === 'image' && item.imageData) {
-                            fabric.Image.fromURL(item.imageData, (img) => {
-                                img.set({
-                                    left: item.left,
-                                    top: item.top,
-                                    scaleX: item.scaleX || 1,
-                                    scaleY: item.scaleY || 1,
-                                    selectable: false,
-                                    evented: false
-                                });
-                                canvas.add(img);
-                            });
-                        } else if (item.type === 'text') {
-                            objects.push(new fabric.Text(item.text, {
-                                left: item.left,
-                                top: item.top,
-                                fill: item.fill,
-                                fontSize: item.fontSize || 20,
-                                selectable: false,
-                                evented: false
-                            }));
                         }
                     });
                     
@@ -345,6 +267,26 @@
             newPixelRef.set(pixel);
         }
 
+        // Remove pixel from Firebase
+        function removePixel(x, y, size) {
+            const pixelsRef = database.ref('pixels');
+            pixelsRef.once('value', (snapshot) => {
+                const data = snapshot.val();
+                if (data) {
+                    Object.keys(data).forEach(key => {
+                        const item = data[key];
+                        if (item.type === 'rect') {
+                            // Проверяем попадает ли пиксель в область ластика
+                            if (Math.abs(item.left - x) < size/2 && 
+                                Math.abs(item.top - y) < size/2) {
+                                pixelsRef.child(key).remove();
+                            }
+                        }
+                    });
+                }
+            });
+        }
+
         // Initialize canvas
         loadCanvas();
 
@@ -352,8 +294,16 @@
         pencilBtn.addEventListener('click', () => {
             currentTool = 'pencil';
             pencilBtn.classList.add('active');
+            eraserBtn.classList.remove('active');
             moveBtn.classList.remove('active');
-            selectBtn.classList.remove('active');
+            canvas.defaultCursor = 'crosshair';
+        });
+
+        eraserBtn.addEventListener('click', () => {
+            currentTool = 'eraser';
+            eraserBtn.classList.add('active');
+            pencilBtn.classList.remove('active');
+            moveBtn.classList.remove('active');
             canvas.defaultCursor = 'crosshair';
         });
 
@@ -361,91 +311,8 @@
             currentTool = 'move';
             moveBtn.classList.add('active');
             pencilBtn.classList.remove('active');
-            selectBtn.classList.remove('active');
+            eraserBtn.classList.remove('active');
             canvas.defaultCursor = 'grab';
-        });
-
-        selectBtn.addEventListener('click', () => {
-            if (!isAdmin) return;
-            currentTool = 'select';
-            selectBtn.classList.add('active');
-            pencilBtn.classList.remove('active');
-            moveBtn.classList.remove('active');
-            canvas.defaultCursor = 'default';
-        });
-
-        // Text tool
-        textBtn.addEventListener('click', () => {
-            if (!isAdmin) return;
-            const text = prompt('Введите текст:');
-            if (text) {
-                const pointer = canvas.getPointer({ clientX: window.innerWidth/2, clientY: window.innerHeight/2 });
-                const textObj = new fabric.Text(text, {
-                    left: (pointer.x - canvas.viewportTransform[4]) / zoom,
-                    top: (pointer.y - canvas.viewportTransform[5]) / zoom,
-                    fill: currentColor,
-                    fontSize: 20,
-                    selectable: false,
-                    evented: false
-                });
-                canvas.add(textObj);
-                
-                savePixel({
-                    type: 'text',
-                    text: text,
-                    left: textObj.left,
-                    top: textObj.top,
-                    fill: currentColor,
-                    fontSize: 20
-                });
-            }
-        });
-
-        // Image tool
-        imageBtn.addEventListener('click', () => {
-            if (!isAdmin) return;
-            fileInput.click();
-        });
-
-        fileInput.addEventListener('change', (e) => {
-            const file = e.target.files[0];
-            if (file) {
-                const reader = new FileReader();
-                reader.onload = (f) => {
-                    fabric.Image.fromURL(f.result, (img) => {
-                        // Resize image to max 100x100
-                        const maxSize = 100;
-                        let scale = 1;
-                        if (img.width > img.height) {
-                            scale = maxSize / img.width;
-                        } else {
-                            scale = maxSize / img.height;
-                        }
-                        
-                        const pointer = canvas.getPointer({ clientX: window.innerWidth/2, clientY: window.innerHeight/2 });
-                        img.set({
-                            left: (pointer.x - canvas.viewportTransform[4]) / zoom,
-                            top: (pointer.y - canvas.viewportTransform[5]) / zoom,
-                            scaleX: scale,
-                            scaleY: scale,
-                            selectable: false,
-                            evented: false
-                        });
-                        
-                        canvas.add(img);
-                        
-                        savePixel({
-                            type: 'image',
-                            imageData: f.result,
-                            left: img.left,
-                            top: img.top,
-                            scaleX: scale,
-                            scaleY: scale
-                        });
-                    });
-                };
-                reader.readAsDataURL(file);
-            }
         });
 
         // Color picker
@@ -480,17 +347,13 @@
                 lastX = x;
                 lastY = y;
                 canvas.defaultCursor = 'grabbing';
-            } else if (currentTool === 'select' && options.e.button === 0) {
-                isSelecting = true;
-                selectionStart = { x: x, y: y };
-                selectionRect.style.left = `${x}px`;
-                selectionRect.style.top = `${y}px`;
-                selectionRect.style.width = '0';
-                selectionRect.style.height = '0';
-                selectionRect.style.display = 'block';
-            } else if (currentTool === 'pencil' && options.e.button === 0) {
+            } else if ((currentTool === 'pencil' || currentTool === 'eraser') && options.e.button === 0) {
                 isDrawing = true;
-                drawPixel(x, y);
+                if (currentTool === 'pencil') {
+                    drawPixel(x, y);
+                } else {
+                    erasePixel(x, y);
+                }
             }
         });
 
@@ -510,22 +373,12 @@
                 
                 lastX = x;
                 lastY = y;
-            } else if (isSelecting) {
-                const width = x - selectionStart.x;
-                const height = y - selectionStart.y;
-                
-                selectionRect.style.width = `${Math.abs(width)}px`;
-                selectionRect.style.height = `${Math.abs(height)}px`;
-                
-                if (width < 0) {
-                    selectionRect.style.left = `${x}px`;
+            } else if (isDrawing) {
+                if (currentTool === 'pencil') {
+                    drawPixel(x, y);
+                } else if (currentTool === 'eraser') {
+                    erasePixel(x, y);
                 }
-                
-                if (height < 0) {
-                    selectionRect.style.top = `${y}px`;
-                }
-            } else if (isDrawing && currentTool === 'pencil') {
-                drawPixel(x, y);
             }
         });
 
@@ -533,73 +386,8 @@
             if (panning) {
                 panning = false;
                 canvas.defaultCursor = 'grab';
-            } else if (isSelecting) {
-                isSelecting = false;
-                selectionRect.style.display = 'none';
-                
-                const x1 = Math.min(selectionStart.x, selectionStart.x + parseInt(selectionRect.style.width));
-                const y1 = Math.min(selectionStart.y, selectionStart.y + parseInt(selectionRect.style.height));
-                const x2 = x1 + Math.abs(parseInt(selectionRect.style.width));
-                const y2 = y1 + Math.abs(parseInt(selectionRect.style.height));
-                
-                selectedObjects = [];
-                canvas.forEachObject(obj => {
-                    const objLeft = obj.left * zoom + canvas.viewportTransform[4];
-                    const objTop = obj.top * zoom + canvas.viewportTransform[5];
-                    const objWidth = obj.width * obj.scaleX * zoom;
-                    const objHeight = obj.height * obj.scaleY * zoom;
-                    
-                    if (
-                        objLeft < x2 &&
-                        objLeft + objWidth > x1 &&
-                        objTop < y2 &&
-                        objTop + objHeight > y1
-                    ) {
-                        selectedObjects.push(obj);
-                    }
-                });
             } else if (isDrawing) {
                 isDrawing = false;
-            }
-        });
-
-        // Handle selection movement
-        canvas.on('mouse:down:before', (options) => {
-            if (currentTool === 'select' && options.e.button === 0 && selectedObjects.length > 0) {
-                const pointer = canvas.getPointer(options.e);
-                const x = pointer.x;
-                const y = pointer.y;
-                
-                const deltaX = x - selectionStart.x;
-                const deltaY = y - selectionStart.y;
-                
-                selectedObjects.forEach(obj => {
-                    obj.left += deltaX / zoom;
-                    obj.top += deltaY / zoom;
-                    canvas.renderAll();
-                });
-                
-                updateAllPixelsInFirebase();
-                selectedObjects = [];
-                return false;
-            }
-        });
-
-        // Handle key events (Delete for selected objects)
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'Delete' && isAdmin && selectedObjects.length > 0) {
-                selectedObjects.forEach(obj => {
-                    canvas.remove(obj);
-                });
-                updateAllPixelsInFirebase();
-                selectedObjects = [];
-            }
-        });
-
-        // Prevent context menu on right click
-        canvas.on('mouse:down:before', (options) => {
-            if (options.e.button === 2) {
-                options.e.preventDefault();
             }
         });
 
@@ -635,44 +423,28 @@
             });
         }
 
-        // Update all pixels in Firebase (admin only)
-        function updateAllPixelsInFirebase() {
-            if (!isAdmin) return;
+        // Erase pixels function
+        function erasePixel(x, y) {
+            if (!isDrawing) return;
             
-            const pixels = {};
-            let index = 0;
-            canvas.forEachObject((obj) => {
+            const vpt = canvas.viewportTransform;
+            const canvasX = (x - vpt[4]) / zoom;
+            const canvasY = (y - vpt[5]) / zoom;
+            
+            // Удаляем пиксели с холста
+            const objects = canvas.getObjects();
+            for (let i = objects.length - 1; i >= 0; i--) {
+                const obj = objects[i];
                 if (obj.type === 'rect') {
-                    pixels[`pixel_${index++}`] = {
-                        type: 'rect',
-                        left: obj.left,
-                        top: obj.top,
-                        width: obj.width,
-                        height: obj.height,
-                        fill: obj.fill
-                    };
-                } else if (obj.type === 'image') {
-                    pixels[`image_${index++}`] = {
-                        type: 'image',
-                        imageData: obj.toDataURL(),
-                        left: obj.left,
-                        top: obj.top,
-                        scaleX: obj.scaleX,
-                        scaleY: obj.scaleY
-                    };
-                } else if (obj.type === 'text') {
-                    pixels[`text_${index++}`] = {
-                        type: 'text',
-                        text: obj.text,
-                        left: obj.left,
-                        top: obj.top,
-                        fill: obj.fill,
-                        fontSize: obj.fontSize
-                    };
+                    if (Math.abs(obj.left - canvasX) < eraserSize/2 && 
+                        Math.abs(obj.top - canvasY) < eraserSize/2) {
+                        canvas.remove(obj);
+                    }
                 }
-            });
+            }
             
-            database.ref('pixels').set(pixels);
+            // Удаляем пиксели из Firebase
+            removePixel(Math.floor(canvasX), Math.floor(canvasY), eraserSize);
         }
 
         // Window resize handler
