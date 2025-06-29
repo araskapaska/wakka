@@ -182,7 +182,6 @@
             }
         }
 
-        /* Selection rectangle style */
         .selection-rect {
             border: 2px dashed var(--accent-color);
             background-color: rgba(187, 134, 252, 0.1);
@@ -263,7 +262,6 @@
         let lastX = 0;
         let lastY = 0;
         let isAdmin = false;
-        let adminPassword = '';
         let isSelecting = false;
         let selectionStart = { x: 0, y: 0 };
         let selectionRect = document.getElementById('selection-rect');
@@ -287,19 +285,25 @@
         const selectBtn = document.getElementById('select-btn');
         const fileInput = document.getElementById('file-input');
 
-        // Check for admin mode
+        // Check for admin mode with text password
         const urlParams = new URLSearchParams(window.location.search);
         if (urlParams.has('admin') && urlParams.get('admin') === 'true') {
             const password = prompt('Введите пароль администратора:');
             if (password) {
                 database.ref('password').once('value').then(snapshot => {
-                    if (snapshot.val() === password) {
+                    const dbPassword = snapshot.val();
+                    if (dbPassword && dbPassword.toString() === password.toString()) {
                         isAdmin = true;
                         adminPanel.style.display = 'flex';
-                        pencilSize = 1; // Admin can draw with 1px
+                        pencilSize = 1;
+                        console.log('Аутентификация успешна');
                     } else {
                         alert('Неверный пароль!');
+                        console.log('Введенный пароль:', password, 'Ожидался:', dbPassword);
                     }
+                }).catch(error => {
+                    console.error('Ошибка при проверке пароля:', error);
+                    alert('Ошибка при проверке пароля');
                 });
             }
         }
@@ -392,9 +396,10 @@
             if (!isAdmin) return;
             const text = prompt('Введите текст:');
             if (text) {
+                const viewportTransform = canvas.viewportTransform;
                 const textObj = new fabric.Text(text, {
-                    left: -canvas.viewportTransform[4] + 50,
-                    top: -canvas.viewportTransform[5] + 50,
+                    left: -viewportTransform[4] / zoom + 50,
+                    top: -viewportTransform[5] / zoom + 50,
                     fill: currentColor,
                     fontSize: 20,
                     selectable: false,
@@ -402,7 +407,6 @@
                 });
                 canvas.add(textObj);
                 
-                // Save to Firebase
                 savePixel({
                     type: 'text',
                     text: text,
@@ -453,9 +457,10 @@
                             scale = maxSize / img.height;
                         }
                         
+                        const viewportTransform = canvas.viewportTransform;
                         img.set({
-                            left: -canvas.viewportTransform[4] + 50,
-                            top: -canvas.viewportTransform[5] + 50,
+                            left: -viewportTransform[4] / zoom + 50,
+                            top: -viewportTransform[5] / zoom + 50,
                             scaleX: scale,
                             scaleY: scale,
                             selectable: false,
@@ -464,7 +469,6 @@
                         
                         canvas.add(img);
                         
-                        // Save to Firebase
                         savePixel({
                             type: 'image',
                             imageData: f.target.result,
@@ -480,7 +484,7 @@
             fileInput.value = '';
         });
 
-        // Canvas mouse events
+        // Canvas mouse events with fixed positioning
         canvas.on('mouse:down', (options) => {
             const pointer = canvas.getPointer(options.e);
             const x = pointer.x;
@@ -492,7 +496,6 @@
                 lastY = y;
                 canvas.defaultCursor = 'grabbing';
             } else if (currentTool === 'select' && options.e.button === 2) {
-                // Right mouse button for selection
                 isSelecting = true;
                 selectionStart = { x: x, y: y };
                 selectionRect.style.left = `${x}px`;
@@ -549,7 +552,6 @@
                 isSelecting = false;
                 selectionRect.style.display = 'none';
                 
-                // Get selected objects
                 const x1 = Math.min(selectionStart.x, selectionStart.x + parseInt(selectionRect.style.width));
                 const y1 = Math.min(selectionStart.y, selectionStart.y + parseInt(selectionRect.style.height));
                 const x2 = x1 + Math.abs(parseInt(selectionRect.style.width));
@@ -557,10 +559,10 @@
                 
                 selectedObjects = [];
                 canvas.forEachObject(obj => {
-                    const objLeft = obj.left * canvas.getZoom() + canvas.viewportTransform[4];
-                    const objTop = obj.top * canvas.getZoom() + canvas.viewportTransform[5];
-                    const objWidth = obj.width * obj.scaleX * canvas.getZoom();
-                    const objHeight = obj.height * obj.scaleY * canvas.getZoom();
+                    const objLeft = obj.left * zoom + canvas.viewportTransform[4];
+                    const objTop = obj.top * zoom + canvas.viewportTransform[5];
+                    const objWidth = obj.width * obj.scaleX * zoom;
+                    const objHeight = obj.height * obj.scaleY * zoom;
                     
                     if (
                         objLeft < x2 &&
@@ -583,43 +585,28 @@
                 const x = pointer.x;
                 const y = pointer.y;
                 
-                // Calculate movement delta
                 const deltaX = x - selectionStart.x;
                 const deltaY = y - selectionStart.y;
                 
-                // Move all selected objects
                 selectedObjects.forEach(obj => {
-                    obj.left += deltaX / canvas.getZoom();
-                    obj.top += deltaY / canvas.getZoom();
+                    obj.left += deltaX / zoom;
+                    obj.top += deltaY / zoom;
                 });
                 
                 canvas.renderAll();
-                
-                // Update positions in Firebase (for admin)
-                if (isAdmin) {
-                    // This would require tracking object IDs in Firebase for proper updates
-                    // For simplicity, we'll just redraw everything
-                    updateAllPixelsInFirebase();
-                }
-                
-                // Clear selection
+                updateAllPixelsInFirebase();
                 selectedObjects = [];
-                return false; // Prevent default behavior
+                return false;
             }
         });
 
         // Handle key events (Delete for selected objects)
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Delete' && isAdmin && selectedObjects.length > 0) {
-                // Remove objects from canvas
                 selectedObjects.forEach(obj => {
                     canvas.remove(obj);
                 });
-                
-                // Update Firebase (would need object IDs for proper deletion)
                 updateAllPixelsInFirebase();
-                
-                // Clear selection
                 selectedObjects = [];
             }
         });
@@ -631,28 +618,28 @@
             }
         });
 
-        // Draw pixel function
+        // Fixed draw pixel function with correct positioning
         function drawPixel(x, y) {
             if (!isDrawing) return;
             
-            // Convert screen coordinates to canvas coordinates
-            const canvasX = (x - canvas.viewportTransform[4]) / canvas.getZoom();
-            const canvasY = (y - canvas.viewportTransform[5]) / canvas.getZoom();
+            const vpt = canvas.viewportTransform;
+            const canvasX = (x - vpt[4]) / zoom;
+            const canvasY = (y - vpt[5]) / zoom;
             
-            // Create a rectangle (pixel)
             const rect = new fabric.Rect({
-                left: canvasX - pencilSize / 2,
-                top: canvasY - pencilSize / 2,
+                left: Math.floor(canvasX),
+                top: Math.floor(canvasY),
                 width: pencilSize,
                 height: pencilSize,
                 fill: currentColor,
                 selectable: false,
-                evented: false
+                evented: false,
+                originX: 'left',
+                originY: 'top'
             });
             
             canvas.add(rect);
             
-            // Save to Firebase
             savePixel({
                 type: 'rect',
                 left: rect.left,
