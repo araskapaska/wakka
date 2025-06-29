@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wakka онлайн рисование</title>
+    <script src="https://www.gstatic.com/firebasejs/9.6.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.0/firebase-database-compat.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        :root {
+            --bg-color: #121212;
+            --menu-bg: #1e1e1e;
+            --accent-color: #bb86fc;
+            --text-color: #e0e0e0;
+            --border-color: #333;
+            --button-hover: #2d2d2d;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            overflow: hidden;
+            touch-action: none;
+        }
+
+        #app {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+
+        #menu {
+            background-color: var(--menu-bg);
+            padding: 10px 20px;
+            border-radius: 0 0 20px 20px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            flex-wrap: wrap;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+            z-index: 100;
+        }
+
+        .menu-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 5px 10px;
+            border-radius: 20px;
+            background-color: rgba(0, 0, 0, 0.2);
+        }
+
+        button {
+            background-color: transparent;
+            border: none;
+            color: var(--text-color);
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 16px;
+        }
+
+        button:hover {
+            background-color: var(--button-hover);
+        }
+
+        button.active {
+            background-color: var(--accent-color);
+            color: white;
+        }
+
+        #color-picker {
+            width: 40px;
+            height: 40px;
+            border: none;
+            border-radius: 50%;
+            cursor: pointer;
+            background: transparent;
+            padding: 0;
+        }
+
+        #color-picker::-webkit-color-swatch {
+            border-radius: 50%;
+            border: 2px solid var(--border-color);
+        }
+
+        #color-picker::-webkit-color-swatch-wrapper {
+            padding: 0;
+        }
+
+        #canvas-container {
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+        }
+
+        #main-canvas {
+            background-color: #1a1a1a;
+            cursor: crosshair;
+        }
+
+        #footer {
+            text-align: center;
+            padding: 10px;
+            font-size: 12px;
+            color: var(--text-color);
+            background-color: var(--menu-bg);
+        }
+
+        #footer a {
+            color: var(--accent-color);
+            text-decoration: none;
+        }
+
+        #admin-panel {
+            display: none;
+            background-color: rgba(0, 0, 0, 0.7);
+            padding: 10px;
+            border-radius: 10px;
+            margin-left: auto;
+        }
+
+        #file-input {
+            display: none;
+        }
+
+        .file-input-label {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+        }
+
+        #zoom-level {
+            min-width: 50px;
+            text-align: center;
+            font-weight: bold;
+        }
+
+        .admin-button {
+            background-color: #ff5722;
+        }
+
+        .admin-button:hover {
+            background-color: #e64a19;
+        }
+
+        .admin-button.active {
+            background-color: #d84315;
+        }
+
+        @media (max-width: 768px) {
+            #menu {
+                gap: 8px;
+                padding: 8px 10px;
+            }
+
+            button {
+                width: 36px;
+                height: 36px;
+                font-size: 14px;
+            }
+
+            #color-picker {
+                width: 36px;
+                height: 36px;
+            }
+
+            .menu-group {
+                gap: 6px;
+                padding: 4px 8px;
+            }
+        }
+
+        /* Selection rectangle style */
+        .selection-rect {
+            border: 2px dashed var(--accent-color);
+            background-color: rgba(187, 134, 252, 0.1);
+            position: absolute;
+            pointer-events: none;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <div id="menu">
+            <div class="menu-group">
+                <button id="pencil-btn" class="active" title="Карандаш"><i class="fas fa-pencil-alt"></i></button>
+                <button id="move-btn" title="Перемещение"><i class="fas fa-arrows-alt"></i></button>
+            </div>
+            <div class="menu-group">
+                <button id="zoom-out-btn" title="Уменьшить"><i class="fas fa-search-minus"></i></button>
+                <span id="zoom-level">100%</span>
+                <button id="zoom-in-btn" title="Увеличить"><i class="fas fa-search-plus"></i></button>
+            </div>
+            <div class="menu-group">
+                <input type="color" id="color-picker" value="#ffffff" title="Выбор цвета">
+            </div>
+            <div id="admin-panel">
+                <div class="menu-group">
+                    <button id="text-btn" title="Добавить текст"><i class="fas fa-font"></i></button>
+                    <label for="file-input" class="file-input-label" title="Добавить изображение">
+                        <button><i class="fas fa-image"></i></button>
+                    </label>
+                    <input type="file" id="file-input" accept="image/*">
+                    <button id="select-btn" title="Выделение (ПКМ)"><i class="fas fa-vector-square"></i></button>
+                </div>
+            </div>
+        </div>
+        <div id="canvas-container">
+            <canvas id="main-canvas"></canvas>
+            <div id="selection-rect" class="selection-rect"></div>
+        </div>
+        <div id="footer">
+            Wakka онлайн рисование | Сделано <a href="https://t.me/kloko_fort" target="_blank">@kloko_fort</a>
+        </div>
+    </div>
+
+    <script>
+        // Firebase configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyAyshIBHEJuXcsu3sZEQZW2nKu9s2-9dZA",
+            authDomain: "wakka-789d2.firebaseapp.com",
+            databaseURL: "https://wakka-789d2-default-rtdb.firebaseio.com",
+            projectId: "wakka-789d2",
+            storageBucket: "wakka-789d2.appspot.com",
+            messagingSenderId: "397138062468",
+            appId: "1:397138062468:web:29cfce7ca2f6172bbd66d1",
+            measurementId: "G-SRP69TVNF6"
+        };
+
+        // Initialize Firebase
+        const app = firebase.initializeApp(firebaseConfig);
+        const database = firebase.database();
+
+        // Canvas setup
+        const canvas = new fabric.Canvas('main-canvas', {
+            selection: false,
+            preserveObjectStacking: true
+        });
+
+        // Canvas dimensions
+        const CANVAS_WIDTH = 10000;
+        const CANVAS_HEIGHT = 10000;
+        canvas.setWidth(window.innerWidth);
+        canvas.setHeight(window.innerHeight - document.getElementById('menu').offsetHeight - document.getElementById('footer').offsetHeight);
+        canvas.setBackgroundColor('#1a1a1a', canvas.renderAll.bind(canvas));
+
+        // Viewport setup
+        let zoom = 1;
+        let panning = false;
+        let lastX = 0;
+        let lastY = 0;
+        let isAdmin = false;
+        let adminPassword = '';
+        let isSelecting = false;
+        let selectionStart = { x: 0, y: 0 };
+        let selectionRect = document.getElementById('selection-rect');
+        let selectedObjects = [];
+
+        // Drawing variables
+        let isDrawing = false;
+        let currentColor = '#ffffff';
+        let currentTool = 'pencil';
+        let pencilSize = 3;
+
+        // UI elements
+        const colorPicker = document.getElementById('color-picker');
+        const zoomLevel = document.getElementById('zoom-level');
+        const pencilBtn = document.getElementById('pencil-btn');
+        const moveBtn = document.getElementById('move-btn');
+        const zoomInBtn = document.getElementById('zoom-in-btn');
+        const zoomOutBtn = document.getElementById('zoom-out-btn');
+        const adminPanel = document.getElementById('admin-panel');
+        const textBtn = document.getElementById('text-btn');
+        const selectBtn = document.getElementById('select-btn');
+        const fileInput = document.getElementById('file-input');
+
+        // Check for admin mode
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.has('admin') && urlParams.get('admin') === 'true') {
+            const password = prompt('Введите пароль администратора:');
+            if (password) {
+                database.ref('password').once('value').then(snapshot => {
+                    if (snapshot.val() === password) {
+                        isAdmin = true;
+                        adminPanel.style.display = 'flex';
+                        pencilSize = 1; // Admin can draw with 1px
+                    } else {
+                        alert('Неверный пароль!');
+                    }
+                });
+            }
+        }
+
+        // Load canvas data from Firebase
+        function loadCanvas() {
+            database.ref('pixels').on('value', (snapshot) => {
+                const data = snapshot.val();
+                if (data) {
+                    canvas.clear();
+                    canvas.setBackgroundColor('#1a1a1a', () => {
+                        Object.keys(data).forEach(key => {
+                            const item = data[key];
+                            if (item.type === 'rect') {
+                                const rect = new fabric.Rect({
+                                    left: item.left,
+                                    top: item.top,
+                                    width: item.width,
+                                    height: item.height,
+                                    fill: item.fill,
+                                    selectable: false,
+                                    evented: false
+                                });
+                                canvas.add(rect);
+                            } else if (item.type === 'image' && item.imageData) {
+                                fabric.Image.fromURL(item.imageData, (img) => {
+                                    img.set({
+                                        left: item.left,
+                                        top: item.top,
+                                        scaleX: item.scaleX,
+                                        scaleY: item.scaleY,
+                                        selectable: false,
+                                        evented: false
+                                    });
+                                    canvas.add(img);
+                                });
+                            } else if (item.type === 'text') {
+                                const text = new fabric.Text(item.text, {
+                                    left: item.left,
+                                    top: item.top,
+                                    fill: item.fill,
+                                    fontSize: item.fontSize,
+                                    selectable: false,
+                                    evented: false
+                                });
+                                canvas.add(text);
+                            }
+                        });
+                    });
+                }
+            });
+        }
+
+        // Save pixel to Firebase
+        function savePixel(pixel) {
+            const newPixelRef = database.ref('pixels').push();
+            newPixelRef.set(pixel);
+        }
+
+        // Initialize canvas
+        loadCanvas();
+
+        // Event listeners for tools
+        pencilBtn.addEventListener('click', () => {
+            currentTool = 'pencil';
+            pencilBtn.classList.add('active');
+            moveBtn.classList.remove('active');
+            selectBtn.classList.remove('active');
+            canvas.defaultCursor = 'crosshair';
+        });
+
+        moveBtn.addEventListener('click', () => {
+            currentTool = 'move';
+            moveBtn.classList.add('active');
+            pencilBtn.classList.remove('active');
+            selectBtn.classList.remove('active');
+            canvas.defaultCursor = 'grab';
+        });
+
+        selectBtn.addEventListener('click', () => {
+            if (!isAdmin) return;
+            currentTool = 'select';
+            selectBtn.classList.add('active');
+            pencilBtn.classList.remove('active');
+            moveBtn.classList.remove('active');
+            canvas.defaultCursor = 'default';
+        });
+
+        textBtn.addEventListener('click', () => {
+            if (!isAdmin) return;
+            const text = prompt('Введите текст:');
+            if (text) {
+                const textObj = new fabric.Text(text, {
+                    left: -canvas.viewportTransform[4] + 50,
+                    top: -canvas.viewportTransform[5] + 50,
+                    fill: currentColor,
+                    fontSize: 20,
+                    selectable: false,
+                    evented: false
+                });
+                canvas.add(textObj);
+                
+                // Save to Firebase
+                savePixel({
+                    type: 'text',
+                    text: text,
+                    left: textObj.left,
+                    top: textObj.top,
+                    fill: currentColor,
+                    fontSize: 20
+                });
+            }
+        });
+
+        // Color picker
+        colorPicker.addEventListener('input', (e) => {
+            currentColor = e.target.value;
+        });
+
+        // Zoom functionality
+        zoomInBtn.addEventListener('click', () => {
+            zoom *= 1.2;
+            updateZoom();
+        });
+
+        zoomOutBtn.addEventListener('click', () => {
+            zoom /= 1.2;
+            updateZoom();
+        });
+
+        function updateZoom() {
+            canvas.setZoom(zoom);
+            zoomLevel.textContent = `${Math.round(zoom * 100)}%`;
+        }
+
+        // Image upload
+        fileInput.addEventListener('change', (e) => {
+            if (!isAdmin) return;
+            
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = (f) => {
+                    fabric.Image.fromURL(f.target.result, (img) => {
+                        // Resize image to max 100x100
+                        const maxSize = 100;
+                        let scale = 1;
+                        if (img.width > img.height) {
+                            scale = maxSize / img.width;
+                        } else {
+                            scale = maxSize / img.height;
+                        }
+                        
+                        img.set({
+                            left: -canvas.viewportTransform[4] + 50,
+                            top: -canvas.viewportTransform[5] + 50,
+                            scaleX: scale,
+                            scaleY: scale,
+                            selectable: false,
+                            evented: false
+                        });
+                        
+                        canvas.add(img);
+                        
+                        // Save to Firebase
+                        savePixel({
+                            type: 'image',
+                            imageData: f.target.result,
+                            left: img.left,
+                            top: img.top,
+                            scaleX: scale,
+                            scaleY: scale
+                        });
+                    });
+                };
+                reader.readAsDataURL(file);
+            }
+            fileInput.value = '';
+        });
+
+        // Canvas mouse events
+        canvas.on('mouse:down', (options) => {
+            const pointer = canvas.getPointer(options.e);
+            const x = pointer.x;
+            const y = pointer.y;
+            
+            if (currentTool === 'move' && options.e.button === 0) {
+                panning = true;
+                lastX = x;
+                lastY = y;
+                canvas.defaultCursor = 'grabbing';
+            } else if (currentTool === 'select' && options.e.button === 2) {
+                // Right mouse button for selection
+                isSelecting = true;
+                selectionStart = { x: x, y: y };
+                selectionRect.style.left = `${x}px`;
+                selectionRect.style.top = `${y}px`;
+                selectionRect.style.width = '0';
+                selectionRect.style.height = '0';
+                selectionRect.style.display = 'block';
+            } else if (currentTool === 'pencil' && options.e.button === 0) {
+                isDrawing = true;
+                drawPixel(x, y);
+            }
+        });
+
+        canvas.on('mouse:move', (options) => {
+            const pointer = canvas.getPointer(options.e);
+            const x = pointer.x;
+            const y = pointer.y;
+            
+            if (panning) {
+                const deltaX = x - lastX;
+                const deltaY = y - lastY;
+                
+                canvas.relativePan({
+                    x: deltaX,
+                    y: deltaY
+                });
+                
+                lastX = x;
+                lastY = y;
+            } else if (isSelecting) {
+                const width = x - selectionStart.x;
+                const height = y - selectionStart.y;
+                
+                selectionRect.style.width = `${Math.abs(width)}px`;
+                selectionRect.style.height = `${Math.abs(height)}px`;
+                
+                if (width < 0) {
+                    selectionRect.style.left = `${x}px`;
+                }
+                
+                if (height < 0) {
+                    selectionRect.style.top = `${y}px`;
+                }
+            } else if (isDrawing && currentTool === 'pencil') {
+                drawPixel(x, y);
+            }
+        });
+
+        canvas.on('mouse:up', () => {
+            if (panning) {
+                panning = false;
+                canvas.defaultCursor = 'grab';
+            } else if (isSelecting) {
+                isSelecting = false;
+                selectionRect.style.display = 'none';
+                
+                // Get selected objects
+                const x1 = Math.min(selectionStart.x, selectionStart.x + parseInt(selectionRect.style.width));
+                const y1 = Math.min(selectionStart.y, selectionStart.y + parseInt(selectionRect.style.height));
+                const x2 = x1 + Math.abs(parseInt(selectionRect.style.width));
+                const y2 = y1 + Math.abs(parseInt(selectionRect.style.height));
+                
+                selectedObjects = [];
+                canvas.forEachObject(obj => {
+                    const objLeft = obj.left * canvas.getZoom() + canvas.viewportTransform[4];
+                    const objTop = obj.top * canvas.getZoom() + canvas.viewportTransform[5];
+                    const objWidth = obj.width * obj.scaleX * canvas.getZoom();
+                    const objHeight = obj.height * obj.scaleY * canvas.getZoom();
+                    
+                    if (
+                        objLeft < x2 &&
+                        objLeft + objWidth > x1 &&
+                        objTop < y2 &&
+                        objTop + objHeight > y1
+                    ) {
+                        selectedObjects.push(obj);
+                    }
+                });
+            } else if (isDrawing) {
+                isDrawing = false;
+            }
+        });
+
+        // Handle right-click for selection movement
+        canvas.on('mouse:down:before', (options) => {
+            if (currentTool === 'select' && options.e.button === 2 && selectedObjects.length > 0) {
+                const pointer = canvas.getPointer(options.e);
+                const x = pointer.x;
+                const y = pointer.y;
+                
+                // Calculate movement delta
+                const deltaX = x - selectionStart.x;
+                const deltaY = y - selectionStart.y;
+                
+                // Move all selected objects
+                selectedObjects.forEach(obj => {
+                    obj.left += deltaX / canvas.getZoom();
+                    obj.top += deltaY / canvas.getZoom();
+                });
+                
+                canvas.renderAll();
+                
+                // Update positions in Firebase (for admin)
+                if (isAdmin) {
+                    // This would require tracking object IDs in Firebase for proper updates
+                    // For simplicity, we'll just redraw everything
+                    updateAllPixelsInFirebase();
+                }
+                
+                // Clear selection
+                selectedObjects = [];
+                return false; // Prevent default behavior
+            }
+        });
+
+        // Handle key events (Delete for selected objects)
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Delete' && isAdmin && selectedObjects.length > 0) {
+                // Remove objects from canvas
+                selectedObjects.forEach(obj => {
+                    canvas.remove(obj);
+                });
+                
+                // Update Firebase (would need object IDs for proper deletion)
+                updateAllPixelsInFirebase();
+                
+                // Clear selection
+                selectedObjects = [];
+            }
+        });
+
+        // Prevent context menu on right click
+        canvas.on('mouse:down:before', (options) => {
+            if (options.e.button === 2) {
+                options.e.preventDefault();
+            }
+        });
+
+        // Draw pixel function
+        function drawPixel(x, y) {
+            if (!isDrawing) return;
+            
+            // Convert screen coordinates to canvas coordinates
+            const canvasX = (x - canvas.viewportTransform[4]) / canvas.getZoom();
+            const canvasY = (y - canvas.viewportTransform[5]) / canvas.getZoom();
+            
+            // Create a rectangle (pixel)
+            const rect = new fabric.Rect({
+                left: canvasX - pencilSize / 2,
+                top: canvasY - pencilSize / 2,
+                width: pencilSize,
+                height: pencilSize,
+                fill: currentColor,
+                selectable: false,
+                evented: false
+            });
+            
+            canvas.add(rect);
+            
+            // Save to Firebase
+            savePixel({
+                type: 'rect',
+                left: rect.left,
+                top: rect.top,
+                width: rect.width,
+                height: rect.height,
+                fill: rect.fill
+            });
+        }
+
+        // Update all pixels in Firebase (admin only)
+        function updateAllPixelsInFirebase() {
+            if (!isAdmin) return;
+            
+            const pixels = {};
+            canvas.forEachObject((obj, index) => {
+                if (obj.type === 'rect') {
+                    pixels[`pixel_${Date.now()}_${index}`] = {
+                        type: 'rect',
+                        left: obj.left,
+                        top: obj.top,
+                        width: obj.width,
+                        height: obj.height,
+                        fill: obj.fill
+                    };
+                } else if (obj.type === 'image') {
+                    pixels[`image_${Date.now()}_${index}`] = {
+                        type: 'image',
+                        imageData: obj.toDataURL(),
+                        left: obj.left,
+                        top: obj.top,
+                        scaleX: obj.scaleX,
+                        scaleY: obj.scaleY
+                    };
+                } else if (obj.type === 'text') {
+                    pixels[`text_${Date.now()}_${index}`] = {
+                        type: 'text',
+                        text: obj.text,
+                        left: obj.left,
+                        top: obj.top,
+                        fill: obj.fill,
+                        fontSize: obj.fontSize
+                    };
+                }
+            });
+            
+            database.ref('pixels').set(pixels);
+        }
+
+        // Window resize handler
+        window.addEventListener('resize', () => {
+            canvas.setWidth(window.innerWidth);
+            canvas.setHeight(window.innerHeight - document.getElementById('menu').offsetHeight - document.getElementById('footer').offsetHeight);
+            canvas.renderAll();
+        });
+
+        // Grid pattern for canvas background
+        function createGridPattern() {
+            const gridSize = 1;
+            const gridColor = 'rgba(255, 255, 255, 0.05)';
+            
+            const canvasEl = document.createElement('canvas');
+            canvasEl.width = gridSize * 2;
+            canvasEl.height = gridSize * 2;
+            const ctx = canvasEl.getContext('2d');
+            
+            ctx.fillStyle = gridColor;
+            ctx.fillRect(0, 0, gridSize, gridSize);
+            ctx.fillRect(gridSize, gridSize, gridSize, gridSize);
+            
+            return new fabric.Pattern({
+                source: canvasEl,
+                repeat: 'repeat'
+            });
+        }
+
+        // Set grid background
+        canvas.setBackgroundColor(createGridPattern(), canvas.renderAll.bind(canvas));
+
+        // Initialize with move tool for better UX
+        moveBtn.click();
+    </script>
+</body>
+</html>
