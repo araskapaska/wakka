@@ -130,17 +130,6 @@
             margin-left: auto;
         }
 
-        #file-input {
-            display: none;
-        }
-
-        .file-input-label {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            cursor: pointer;
-        }
-
         #zoom-level {
             min-width: 50px;
             text-align: center;
@@ -209,11 +198,9 @@
             <div id="admin-panel">
                 <div class="menu-group">
                     <button id="text-btn" title="Добавить текст"><i class="fas fa-font"></i></button>
-                    <label for="file-input" class="file-input-label" title="Добавить изображение">
-                        <button><i class="fas fa-image"></i></button>
-                    </label>
-                    <input type="file" id="file-input" accept="image/*">
-                    <button id="select-btn" title="Выделение (ПКМ)"><i class="fas fa-vector-square"></i></button>
+                    <input type="file" id="file-input" accept="image/*" style="display: none;">
+                    <button id="image-btn" title="Добавить изображение"><i class="fas fa-image"></i></button>
+                    <button id="select-btn" title="Выделение (ЛКМ)"><i class="fas fa-vector-square"></i></button>
                 </div>
             </div>
         </div>
@@ -246,7 +233,8 @@
         // Canvas setup
         const canvas = new fabric.Canvas('main-canvas', {
             selection: false,
-            preserveObjectStacking: true
+            preserveObjectStacking: true,
+            renderOnAddRemove: false // Оптимизация производительности
         });
 
         // Canvas dimensions
@@ -283,6 +271,7 @@
         const adminPanel = document.getElementById('admin-panel');
         const textBtn = document.getElementById('text-btn');
         const selectBtn = document.getElementById('select-btn');
+        const imageBtn = document.getElementById('image-btn');
         const fileInput = document.getElementById('file-input');
 
         // Check for admin mode with fixed password 6544
@@ -299,51 +288,53 @@
             }
         }
 
-        // Load canvas data from Firebase
+        // Optimized canvas loader
         function loadCanvas() {
             database.ref('pixels').on('value', (snapshot) => {
                 const data = snapshot.val();
                 if (data) {
                     canvas.clear();
-                    canvas.setBackgroundColor('#1a1a1a', () => {
-                        Object.keys(data).forEach(key => {
-                            const item = data[key];
-                            if (item.type === 'rect') {
-                                const rect = new fabric.Rect({
+                    const objects = [];
+                    
+                    Object.keys(data).forEach(key => {
+                        const item = data[key];
+                        if (item.type === 'rect') {
+                            objects.push(new fabric.Rect({
+                                left: item.left,
+                                top: item.top,
+                                width: item.width,
+                                height: item.height,
+                                fill: item.fill,
+                                selectable: false,
+                                evented: false
+                            }));
+                        } else if (item.type === 'image' && item.imageData) {
+                            fabric.Image.fromURL(item.imageData, (img) => {
+                                img.set({
                                     left: item.left,
                                     top: item.top,
-                                    width: item.width,
-                                    height: item.height,
-                                    fill: item.fill,
+                                    scaleX: item.scaleX || 1,
+                                    scaleY: item.scaleY || 1,
                                     selectable: false,
                                     evented: false
                                 });
-                                canvas.add(rect);
-                            } else if (item.type === 'image' && item.imageData) {
-                                fabric.Image.fromURL(item.imageData, (img) => {
-                                    img.set({
-                                        left: item.left,
-                                        top: item.top,
-                                        scaleX: item.scaleX,
-                                        scaleY: item.scaleY,
-                                        selectable: false,
-                                        evented: false
-                                    });
-                                    canvas.add(img);
-                                });
-                            } else if (item.type === 'text') {
-                                const text = new fabric.Text(item.text, {
-                                    left: item.left,
-                                    top: item.top,
-                                    fill: item.fill,
-                                    fontSize: item.fontSize,
-                                    selectable: false,
-                                    evented: false
-                                });
-                                canvas.add(text);
-                            }
-                        });
+                                canvas.add(img);
+                            });
+                        } else if (item.type === 'text') {
+                            objects.push(new fabric.Text(item.text, {
+                                left: item.left,
+                                top: item.top,
+                                fill: item.fill,
+                                fontSize: item.fontSize || 20,
+                                selectable: false,
+                                evented: false
+                            }));
+                        }
                     });
+                    
+                    // Добавляем все объекты разом для оптимизации
+                    canvas.add(...objects);
+                    canvas.renderAll();
                 }
             });
         }
@@ -383,14 +374,15 @@
             canvas.defaultCursor = 'default';
         });
 
+        // Text tool
         textBtn.addEventListener('click', () => {
             if (!isAdmin) return;
             const text = prompt('Введите текст:');
             if (text) {
-                const viewportTransform = canvas.viewportTransform;
+                const pointer = canvas.getPointer({ clientX: window.innerWidth/2, clientY: window.innerHeight/2 });
                 const textObj = new fabric.Text(text, {
-                    left: -viewportTransform[4] / zoom + 50,
-                    top: -viewportTransform[5] / zoom + 50,
+                    left: (pointer.x - canvas.viewportTransform[4]) / zoom,
+                    top: (pointer.y - canvas.viewportTransform[5]) / zoom,
                     fill: currentColor,
                     fontSize: 20,
                     selectable: false,
@@ -406,6 +398,53 @@
                     fill: currentColor,
                     fontSize: 20
                 });
+            }
+        });
+
+        // Image tool
+        imageBtn.addEventListener('click', () => {
+            if (!isAdmin) return;
+            fileInput.click();
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = (f) => {
+                    fabric.Image.fromURL(f.result, (img) => {
+                        // Resize image to max 100x100
+                        const maxSize = 100;
+                        let scale = 1;
+                        if (img.width > img.height) {
+                            scale = maxSize / img.width;
+                        } else {
+                            scale = maxSize / img.height;
+                        }
+                        
+                        const pointer = canvas.getPointer({ clientX: window.innerWidth/2, clientY: window.innerHeight/2 });
+                        img.set({
+                            left: (pointer.x - canvas.viewportTransform[4]) / zoom,
+                            top: (pointer.y - canvas.viewportTransform[5]) / zoom,
+                            scaleX: scale,
+                            scaleY: scale,
+                            selectable: false,
+                            evented: false
+                        });
+                        
+                        canvas.add(img);
+                        
+                        savePixel({
+                            type: 'image',
+                            imageData: f.result,
+                            left: img.left,
+                            top: img.top,
+                            scaleX: scale,
+                            scaleY: scale
+                        });
+                    });
+                };
+                reader.readAsDataURL(file);
             }
         });
 
@@ -430,51 +469,6 @@
             zoomLevel.textContent = `${Math.round(zoom * 100)}%`;
         }
 
-        // Image upload
-        fileInput.addEventListener('change', (e) => {
-            if (!isAdmin) return;
-            
-            const file = e.target.files[0];
-            if (file) {
-                const reader = new FileReader();
-                reader.onload = (f) => {
-                    fabric.Image.fromURL(f.target.result, (img) => {
-                        // Resize image to max 100x100
-                        const maxSize = 100;
-                        let scale = 1;
-                        if (img.width > img.height) {
-                            scale = maxSize / img.width;
-                        } else {
-                            scale = maxSize / img.height;
-                        }
-                        
-                        const viewportTransform = canvas.viewportTransform;
-                        img.set({
-                            left: -viewportTransform[4] / zoom + 50,
-                            top: -viewportTransform[5] / zoom + 50,
-                            scaleX: scale,
-                            scaleY: scale,
-                            selectable: false,
-                            evented: false
-                        });
-                        
-                        canvas.add(img);
-                        
-                        savePixel({
-                            type: 'image',
-                            imageData: f.target.result,
-                            left: img.left,
-                            top: img.top,
-                            scaleX: scale,
-                            scaleY: scale
-                        });
-                    });
-                };
-                reader.readAsDataURL(file);
-            }
-            fileInput.value = '';
-        });
-
         // Canvas mouse events with fixed positioning
         canvas.on('mouse:down', (options) => {
             const pointer = canvas.getPointer(options.e);
@@ -486,7 +480,7 @@
                 lastX = x;
                 lastY = y;
                 canvas.defaultCursor = 'grabbing';
-            } else if (currentTool === 'select' && options.e.button === 2) {
+            } else if (currentTool === 'select' && options.e.button === 0) {
                 isSelecting = true;
                 selectionStart = { x: x, y: y };
                 selectionRect.style.left = `${x}px`;
@@ -569,9 +563,9 @@
             }
         });
 
-        // Handle right-click for selection movement
+        // Handle selection movement
         canvas.on('mouse:down:before', (options) => {
-            if (currentTool === 'select' && options.e.button === 2 && selectedObjects.length > 0) {
+            if (currentTool === 'select' && options.e.button === 0 && selectedObjects.length > 0) {
                 const pointer = canvas.getPointer(options.e);
                 const x = pointer.x;
                 const y = pointer.y;
@@ -582,9 +576,9 @@
                 selectedObjects.forEach(obj => {
                     obj.left += deltaX / zoom;
                     obj.top += deltaY / zoom;
+                    canvas.renderAll();
                 });
                 
-                canvas.renderAll();
                 updateAllPixelsInFirebase();
                 selectedObjects = [];
                 return false;
@@ -646,9 +640,10 @@
             if (!isAdmin) return;
             
             const pixels = {};
-            canvas.forEachObject((obj, index) => {
+            let index = 0;
+            canvas.forEachObject((obj) => {
                 if (obj.type === 'rect') {
-                    pixels[`pixel_${Date.now()}_${index}`] = {
+                    pixels[`pixel_${index++}`] = {
                         type: 'rect',
                         left: obj.left,
                         top: obj.top,
@@ -657,7 +652,7 @@
                         fill: obj.fill
                     };
                 } else if (obj.type === 'image') {
-                    pixels[`image_${Date.now()}_${index}`] = {
+                    pixels[`image_${index++}`] = {
                         type: 'image',
                         imageData: obj.toDataURL(),
                         left: obj.left,
@@ -666,7 +661,7 @@
                         scaleY: obj.scaleY
                     };
                 } else if (obj.type === 'text') {
-                    pixels[`text_${Date.now()}_${index}`] = {
+                    pixels[`text_${index++}`] = {
                         type: 'text',
                         text: obj.text,
                         left: obj.left,
